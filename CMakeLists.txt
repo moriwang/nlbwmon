@@ -7,9 +7,9 @@ add_definitions(-Os -Wall -Werror --std=gnu99 -g3 -Wmissing-declarations -D_GNU_
 option(LIBNL_LIBRARY_TINY "Use LEDE/OpenWrt libnl-tiny" OFF)
 
 set(SOURCES
-	client.c database.c neigh.c nfnetlink.c
-	nlbwmon.c protocol.c socket.c subnets.c
-	timing.c utils.c)
+	client.c conntrack_state.c database.c neigh.c
+	nfnetlink.c nlbwmon.c protocol.c socket.c
+	subnets.c timing.c utils.c)
 
 add_executable(nlbwmon ${SOURCES})
 

@@ -32,6 +32,7 @@
 #include "protocol.h"
 #include "subnets.h"
 #include "neigh.h"
+#include "conntrack_state.h"
 
 
 static uint32_t n_pending_inserts = 0;
@@ -240,24 +241,46 @@ parse_event(void *reply, int len, bool allow_insert, bool update_mac)
 
 		/* local -> remote */
 		if (!match_subnet(r.family, &orig_saddr) && match_subnet(r.family, &orig_daddr)) {
+			uint64_t delta_in_pkts, delta_in_bytes, delta_out_pkts, delta_out_bytes;
+			
 			r.proto = orig_proto;
 			r.dst_port = orig_port;
-			r.in_pkts = reply_pkts;
-			r.in_bytes = reply_bytes;
-			r.out_pkts = orig_pkts;
-			r.out_bytes = orig_bytes;
 			r.src_addr.in6 = orig_saddr;
+			
+			/* Calculate deltas instead of using cumulative values */
+			conntrack_state_update(
+				r.family, r.proto, orig_port, &orig_saddr,
+				reply_pkts, reply_bytes, orig_pkts, orig_bytes,
+				&delta_in_pkts, &delta_in_bytes,
+				&delta_out_pkts, &delta_out_bytes
+			);
+			
+			r.in_pkts = delta_in_pkts;
+			r.in_bytes = delta_in_bytes;
+			r.out_pkts = delta_out_pkts;
+			r.out_bytes = delta_out_bytes;
 		}
 
 		/* remote -> local */
 		else if (!match_subnet(r.family, &reply_saddr) && match_subnet(r.family, &reply_daddr)) {
+			uint64_t delta_in_pkts, delta_in_bytes, delta_out_pkts, delta_out_bytes;
+			
 			r.proto = reply_proto;
 			r.dst_port = reply_port;
-			r.in_pkts = orig_pkts;
-			r.in_bytes = orig_bytes;
-			r.out_pkts = reply_pkts;
-			r.out_bytes = reply_bytes;
 			r.src_addr.in6 = reply_saddr;
+			
+			/* Calculate deltas instead of using cumulative values */
+			conntrack_state_update(
+				r.family, r.proto, reply_port, &reply_saddr,
+				orig_pkts, orig_bytes, reply_pkts, reply_bytes,
+				&delta_in_pkts, &delta_in_bytes,
+				&delta_out_pkts, &delta_out_bytes
+			);
+			
+			r.in_pkts = delta_in_pkts;
+			r.in_bytes = delta_in_bytes;
+			r.out_pkts = delta_out_pkts;
+			r.out_bytes = delta_out_bytes;
 		}
 
 		/* local -> local or remote -> remote */
@@ -397,6 +420,9 @@ nfnetlink_connect(int bufsize)
 
 	if (uloop_fd_add(&ufd, ULOOP_READ))
 		return -errno;
+
+	/* Initialize connection state tracker for incremental counting */
+	conntrack_state_init();
 
 	return 0;
 }

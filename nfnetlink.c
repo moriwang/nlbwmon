@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <time.h>
 
 #include <netlink/netlink.h>
 #include <netlink/genl/genl.h>
@@ -186,6 +187,7 @@ parse_event(void *reply, int len, bool allow_insert, bool update_mac)
 	static struct nlattr *attr[__CTA_MAX + 1];
 	static struct nlattr *tuple[CTA_TUPLE_MAX + 1];
 	static struct nlattr *counters[CTA_COUNTERS_MAX + 1];
+	static FILE *log_file = NULL;
 
 	struct record r = { };
 	struct in6_addr orig_saddr, orig_daddr, reply_saddr, reply_daddr;
@@ -193,6 +195,39 @@ parse_event(void *reply, int len, bool allow_insert, bool update_mac)
 	uint64_t orig_pkts, orig_bytes, reply_pkts, reply_bytes;
 	uint16_t orig_port, reply_port;
 	uint8_t orig_proto, reply_proto;
+
+	/* Log raw input data - minimal change, just save raw netlink message */
+	if (!log_file) {
+		log_file = fopen("/tmp/nlbwmon_raw.log", "ab");
+		if (log_file) {
+			setbuf(log_file, NULL);
+		}
+	}
+	if (log_file && len > 0) {
+		struct timespec ts;
+		/* Define a fixed-width structure for cross-architecture portability (32bit router -> 64bit mac) */
+		struct {
+			uint64_t tv_sec;  /* Force 64-bit seconds */
+			uint64_t tv_nsec; /* Force 64-bit nanoseconds */
+			uint32_t len;     /* Force 32-bit length */
+			uint8_t  flags;
+			uint8_t  pad[3];  /* Align to 24 bytes total size */
+		} __attribute__((packed)) disk_hdr;
+
+		clock_gettime(CLOCK_REALTIME, &ts);
+
+		disk_hdr.tv_sec  = (uint64_t)ts.tv_sec;
+		disk_hdr.tv_nsec = (uint64_t)ts.tv_nsec;
+		disk_hdr.len     = (uint32_t)len;
+		disk_hdr.flags   = 0;
+		if (allow_insert) disk_hdr.flags |= 0x01;
+		if (update_mac)   disk_hdr.flags |= 0x02;
+		memset(disk_hdr.pad, 0, sizeof(disk_hdr.pad));
+
+		fwrite(&disk_hdr, sizeof(disk_hdr), 1, log_file);
+		fwrite(reply, len, 1, log_file);
+		fflush(log_file);
+	}
 
 	for (hdr = reply; nlmsg_ok(hdr, len); hdr = nlmsg_next(hdr, &len)) {
 		gnlh = nlmsg_data(hdr);
